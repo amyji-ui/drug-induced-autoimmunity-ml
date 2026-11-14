@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Generated output: every script rewrites these, so tracking them
+# causes merge conflicts whenever two people run the same step.
+logs/
+*.joblib
+*.pkl
+*.npy
+
+# Notebooks
+.ipynb_checkpoints/
+*.nbconvert.ipynb
+
+# OS and editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Note: data/ is deliberately NOT ignored. The CSVs are ~460 KB total
+# and the project is not reproducible without them.

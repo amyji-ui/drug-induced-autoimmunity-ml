@@ -1,0 +1,24 @@
+# Dependencies for drug-induced-autoimmunity-ml
+# Versions pinned to the shared .venv at 09615_code/.venv as of 2026-11-13.
+#   uv pip install -r requirements.txt
+
+# Core data handling
+numpy==2.5.2
+pandas==3.0.5
+scipy==1.18.1
+
+# Modelling
+scikit-learn==1.9.0
+xgboost==3.4.1          # needs the OpenMP runtime: brew install libomp
+
+# Cheminformatics
+# Pinned below 2026.09: MurckoDecompose raises "bad any cast" in 2026.09.2,
+# which breaks scaffold grouping. 2026.3.6 is the newest working release.
+rdkit==2026.3.6
+
+# Descriptor dictionary (data/RDKit_ChemDes.xlsx)
+openpyxl==3.1.5
+
+# Plotting for the final report
+matplotlib==3.11.1
+seaborn==0.13.2
