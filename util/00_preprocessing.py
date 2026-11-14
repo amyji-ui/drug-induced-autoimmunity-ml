@@ -1,11 +1,13 @@
-"""Shared paths, data loading, and preprocessing transformers for the DIA prediction project.
+"""Data loading and preprocessing transformers for the DIA prediction project.
 
 Nothing here runs on import: every transformer is fit inside a CV training fold by the
-scripts that import this module.
+scripts that import this module. All settings come from config.py.
 """
 
 from __future__ import annotations
 
+import logging
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -20,19 +22,27 @@ from sklearn.utils.validation import (
     validate_data,
 )
 
-PROJECT_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_DIR / "data"
-LOG_DIR = PROJECT_DIR / "logs"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config
 
-TRAIN_FILE = DATA_DIR / "DIA_trainingset_RDKit_descriptors.csv"
-TEST_FILE = DATA_DIR / "DIA_testset_RDKit_descriptors.csv"
 
-LABEL_COLUMN = "Label"
-SMILES_COLUMN = "SMILES"
-POSITIVE_LABEL = 1
+# --------------------------------------------------------------------------
+# Logging
+# --------------------------------------------------------------------------
 
-# Models that need standardized descriptors; trees and boosting do not.
-SCALED_MODELS = ("logistic_regression", "rbf_svm", "knn")
+
+def configure_logging(log_path: Path) -> None:
+    """Send a report to both the log file and the console, overwriting any previous run."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        handlers=[
+            logging.FileHandler(log_path, mode="w"),
+            logging.StreamHandler(),
+        ],
+        force=True,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -51,7 +61,7 @@ def get_descriptor_columns(dataframe: pd.DataFrame) -> list[str]:
     descriptor_columns = [
         column
         for column in dataframe.columns
-        if column not in (LABEL_COLUMN, SMILES_COLUMN)
+        if column not in (config.LABEL_COLUMN, config.SMILES_COLUMN)
     ]
     return descriptor_columns
 
@@ -62,14 +72,42 @@ def split_features_labels(
     """Split one dataframe into descriptors, labels, and SMILES strings."""
     descriptor_columns = get_descriptor_columns(dataframe)
     features = dataframe[descriptor_columns]
-    labels = dataframe[LABEL_COLUMN]
-    smiles = dataframe[SMILES_COLUMN]
+    labels = dataframe[config.LABEL_COLUMN]
+    smiles = dataframe[config.SMILES_COLUMN]
     return features, labels, smiles
 
 
 # --------------------------------------------------------------------------
 # Preprocessing steps (fit inside each CV fold, never on the full dataset)
 # --------------------------------------------------------------------------
+
+
+class LogTransformColumns(BaseEstimator, TransformerMixin):
+    """Apply log1p to the named descriptors and leave every other column untouched.
+
+    This is row-independent, so it learns nothing and cannot leak between folds.
+    Expects a DataFrame, and so belongs first in the pipeline.
+    """
+
+    def __init__(self, columns: tuple[str, ...] = config.HEAVY_TAILED_COLUMNS):
+        self.columns = columns
+
+    def fit(self, X, y=None):
+        self.feature_names_in_ = np.asarray(X.columns)
+        self.n_features_in_ = X.shape[1]
+        return self
+
+    def transform(self, X):
+        check_is_fitted(self)
+        transformed = X.copy()
+        for column in self.columns:
+            if column in transformed.columns:
+                transformed[column] = np.log1p(transformed[column])
+        return transformed
+
+    def get_feature_names_out(self, input_features=None):
+        check_is_fitted(self)
+        return np.asarray(self.feature_names_in_)
 
 
 class CorrelationFilter(BaseEstimator, TransformerMixin):
@@ -129,15 +167,17 @@ class CorrelationFilter(BaseEstimator, TransformerMixin):
 
 
 def build_preprocessor(
-    scale: bool, correlation_threshold: float | None = None
+    scale: bool,
+    correlation_threshold: float | None = config.CORRELATION_THRESHOLD,
 ) -> Pipeline:
     """Assemble the preprocessing pipeline: drop constant columns, optionally drop correlated ones, optionally standardize.
 
     VarianceThreshold learns the constant columns from the training fold rather than a hard-coded list.
-    Pass scale=True for logistic regression, RBF-SVM, and kNN.
+    Callers normally reach this through build_model_pipeline, which reads scale from config.yaml.
     """
     steps: list[tuple[str, BaseEstimator]] = [
-        ("drop_constant", VarianceThreshold(threshold=0.0))
+        ("log_heavy_tailed", LogTransformColumns()),
+        ("drop_constant", VarianceThreshold(threshold=0.0)),
     ]
 
     if correlation_threshold is not None:
@@ -151,14 +191,30 @@ def build_preprocessor(
     return Pipeline(steps)
 
 
+def needs_scaling(model_name: str) -> bool:
+    """Look up in config.yaml whether an algorithm needs standardized descriptors.
+
+    Raises on an unknown name so a typo fails loudly instead of silently skipping the scaler.
+    """
+    if model_name not in config.MODELS:
+        raise KeyError(
+            f"unknown model {model_name!r}; config.yaml lists {list(config.MODEL_NAMES)}"
+        )
+    return bool(config.MODELS[model_name]["scale"])
+
+
 def build_model_pipeline(
     estimator: BaseEstimator,
-    scale: bool,
-    correlation_threshold: float | None = None,
+    model_name: str,
+    correlation_threshold: float | None = config.CORRELATION_THRESHOLD,
 ) -> Pipeline:
-    """Put a classifier behind the preprocessing pipeline so every transform is fit on the training fold only."""
+    """Put a classifier behind the preprocessing pipeline so every transform is fit on the training fold only.
+
+    Scaling is decided by model_name via config.yaml, not by the caller.
+    """
     preprocessor = build_preprocessor(
-        scale=scale, correlation_threshold=correlation_threshold
+        scale=needs_scaling(model_name),
+        correlation_threshold=correlation_threshold,
     )
     model_pipeline = Pipeline(
         [

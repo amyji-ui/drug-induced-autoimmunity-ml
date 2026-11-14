@@ -1,0 +1,66 @@
+# Every setting for the DIA prediction project.
+# Loaded by util/config.py; change a value here and every step picks it up on the next run.
+# Paths are relative to this file's directory (the repo root).
+
+paths:
+  data_dir: data
+  log_dir: logs
+  train_file: data/DIA_trainingset_RDKit_descriptors.csv
+  test_file: data/DIA_testset_RDKit_descriptors.csv
+  descriptor_dictionary_file: data/RDKit_ChemDes.xlsx
+  # One CSV of fold-level scores per model; the fitted pipelines are binary and git-ignored.
+  results_dir: results
+  pipeline_dir: results/pipelines
+
+columns:
+  label: Label
+  smiles: SMILES
+  positive_label: 1
+
+# Used for the CV split and for every stochastic model.
+random_seed: 42
+
+# The five algorithms, and whether each needs standardized descriptors.
+# Trees split on a threshold within one feature at a time, so rescaling cannot change
+# their splits. Distance-based models (kNN, RBF-SVM) and penalized linear models do care.
+models:
+  logistic_regression:
+    scale: true
+  random_forest:
+    scale: false
+  xgboost:
+    scale: false
+  rbf_svm:
+    scale: true
+  knn:
+    scale: true
+
+preprocessing:
+  # Ipc spans 3.2 to 8.5e13 and would otherwise decide every distance on its own.
+  heavy_tailed_columns: [Ipc]
+
+  # The team decided to keep redundant descriptors, so the correlation filter stays
+  # out of the model pipeline. Do not put this in a grid; see PROJECT_SPEC.md section 7.
+  correlation_threshold: null
+
+cross_validation:
+  n_splits: 5
+  acyclic_prefix: "acyclic::"
+
+evaluation:
+  # Fixed by the proposal: continuous scores for ROC AUC and AP, this threshold for the rest.
+  # It is predefined, not tuned.
+  decision_threshold: 0.5
+
+  # Each algorithm's configuration is chosen on the mean of this metric across folds.
+  selection_metric: roc_auc
+
+reports:
+  data_report_log: logs/data_report.log
+  grouping_report_log: logs/grouping_report.log
+
+  # Correlation thresholds compared in the redundancy section, and the one listed in full.
+  redundancy_thresholds: [0.99, 0.95, 0.90]
+  example_threshold: 0.95
+  n_redundancy_examples: 8
+  n_overlap_examples: 15

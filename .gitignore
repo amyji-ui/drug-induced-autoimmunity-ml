@@ -15,6 +15,10 @@ logs/
 *.pkl
 *.npy
 
+# Fitted pipelines are large binaries, regenerable by rerunning the model's script.
+# results/*.csv IS tracked: one small file per model, written by one person each.
+results/pipelines/
+
 # Notebooks
 .ipynb_checkpoints/
 *.nbconvert.ipynb

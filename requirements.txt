@@ -19,6 +19,12 @@ rdkit==2026.3.6
 # Descriptor dictionary (data/RDKit_ChemDes.xlsx)
 openpyxl==3.1.5
 
+# config.yaml
+pyyaml==6.0.3
+
+# Persisting the fitted pipelines
+joblib==1.5.3
+
 # Plotting for the final report
 matplotlib==3.11.1
 seaborn==0.13.2

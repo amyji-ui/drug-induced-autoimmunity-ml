@@ -57,9 +57,106 @@ preprocessing = importlib.import_module("00_preprocessing")
 ### What exists so far
 | File | Role | Status |
 |---|---|---|
-| `util/00_preprocessing.py` | paths, constants, loaders, `CorrelationFilter`, `build_preprocessor`, `build_model_pipeline` | done |
-| `util/01_data_report.py` | data exploration report | done, runs clean |
-| `util/02_*` | scaffold grouping | not started — blocked on RDKit |
+**Only pipeline steps are numbered.** Reports and other side utilities keep plain names, so the
+numbering reads as the pipeline itself.
+
+| File | Role | Status |
+|---|---|---|
+| `config.yaml` | **every setting in the project** (repo root) — edit this, not the code | done |
+| `util/config.py` | loader for `config.yaml`; exposes the settings as module-level names | done |
+| `util/00_preprocessing.py` | pipeline — loaders, transformers, pipeline builders | done |
+| `util/01_scaffold_grouping.py` | pipeline — scaffolds, CV groups, the shared folds | done |
+| `util/02_tuning.py` | pipeline — shared grid-search harness; **freeze once agreed** | done, verified on kNN |
+| `util/03_*` … `07_*` | pipeline — one file per algorithm, each calling the shared harness | not started |
+
+### Writing a per-model script
+
+Each teammate supplies only an estimator and a grid; folds, scaling, metrics, selection rule
+and output format all come from `02_tuning.py` and `config.yaml`.
+
+```python
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config
+
+tuning = importlib.import_module("02_tuning")
+
+tuning.run_grid_search(
+    model_name="knn",                      # must match a key under `models:` in config.yaml
+    estimator=KNeighborsClassifier(),
+    param_grid={"model__n_neighbors": [3, 5, 7, 11, 15],
+                "model__metric": ["euclidean", "manhattan"],
+                "model__weights": ["uniform", "distance"]},
+)
+```
+
+Grid keys are pipeline paths: `model__<param>` reaches the classifier. Never add
+`preprocess__drop_correlated__threshold` (see § 7).
+
+Each run writes `results/<model_name>.csv` (one row per combination × fold, all seven metrics),
+`results/pipelines/<model_name>.joblib` (the winner's five fitted pipelines — the step 4.6
+ensemble), and `logs/tuning_<model_name>.log`.
+| `util/data_report.py` | report → `logs/data_report.log` | done, runs clean |
+| `util/grouping_report.py` | report → `logs/grouping_report.log` | done, runs clean |
+
+### Pipeline API
+
+**All settings live in `config.yaml` at the repo root** — no module defines its own constants.
+`util/config.py` loads that YAML and exposes the values as module-level names; it has a plain
+filename, so it imports normally (`import config`) once `util/` is on `sys.path`, while the
+digit-prefixed pipeline modules still need `importlib.import_module`.
+
+To change a setting, edit `config.yaml`. Never hard-code a path, a column name, or the seed.
+
+Names exposed by `config`:
+- paths (absolute `Path` objects): `PROJECT_DIR`, `DATA_DIR`, `LOG_DIR`, `TRAIN_FILE`, `TEST_FILE`,
+  `DESCRIPTOR_DICTIONARY_FILE`
+- columns: `LABEL_COLUMN`, `SMILES_COLUMN`, `POSITIVE_LABEL`
+- reproducibility: `RANDOM_SEED = 42`
+- models: `MODELS` (name → `{scale: bool}` for all five), `MODEL_NAMES`, `SCALED_MODELS` (derived)
+- preprocessing: `HEAVY_TAILED_COLUMNS = ("Ipc",)`, `CORRELATION_THRESHOLD = None`
+- cross-validation: `N_SPLITS = 5`, `ACYCLIC_PREFIX = "acyclic::"`
+- reports: `DATA_REPORT_LOG`, `GROUPING_REPORT_LOG`, `REDUNDANCY_THRESHOLDS`, `EXAMPLE_THRESHOLD`,
+  `N_REDUNDANCY_EXAMPLES`, `N_OVERLAP_EXAMPLES`
+
+`00_preprocessing.py`
+- `load_split(csv_path) -> DataFrame`
+- `get_descriptor_columns(dataframe) -> list[str]`
+- `split_features_labels(dataframe) -> (features, labels, smiles)`
+- `LogTransformColumns(columns=("Ipc",))` — log1p on heavy-tailed descriptors
+- `CorrelationFilter(threshold=0.95)` — **not in the model pipeline**; used for the redundancy
+  report and to derive importance clusters from `.redundant_pairs_`
+- `needs_scaling(model_name) -> bool` — reads `config.yaml`; raises `KeyError` on an unknown name
+- `build_preprocessor(scale, correlation_threshold=None) -> Pipeline` — low level, takes a bool
+- `build_model_pipeline(estimator, model_name, correlation_threshold=None) -> Pipeline`
+  — **pass the model name, not a bool.** Scaling comes from `config.yaml`, so no one can
+  accidentally standardize a tree or forget to standardize kNN.
+- `configure_logging(log_path)`
+
+`01_scaffold_grouping.py`
+- `compute_scaffold(smiles_string) -> str` — `""` for acyclic or unparseable
+- `build_scaffold_groups(smiles) -> ndarray` — acyclic drugs get `acyclic::<SMILES>` keys
+- `build_cv_folds(features, labels, groups) -> list[(train_idx, val_idx)]`
+- `find_scaffold_overlap(train_groups, test_groups) -> list[str]`
+
+Typical use in a tuning script:
+
+```python
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config
+
+preprocessing = importlib.import_module("00_preprocessing")
+grouping = importlib.import_module("01_scaffold_grouping")
+
+train_df = preprocessing.load_split(config.TRAIN_FILE)
+X, y, smiles = preprocessing.split_features_labels(train_df)
+groups = grouping.build_scaffold_groups(smiles)
+folds = grouping.build_cv_folds(X, y, groups)
+pipeline = preprocessing.build_model_pipeline(estimator, model_name="rbf_svm")
+```
+
+`RANDOM_SEED = 42` lives in `00_preprocessing.py` and is used for both the split and every
+stochastic model. Import `build_cv_folds` from `02_scaffold_grouping.py` rather than constructing
+a splitter, so all models share identical folds as step 4.4 requires.
 
 ---
 
@@ -112,7 +209,14 @@ Run `util/01_data_report.py` to regenerate all of this.
   discriminate there — relevant when reading the importance ranking.
 - **0 invalid SMILES** in either split — all 597 parse cleanly under RDKit.
 - **Scaffolds (train):** 477 molecules → 319 unique Murcko scaffolds, of which **43 are empty**
-  (acyclic drugs). Empty scaffolds are therefore a real case, not a hypothetical: see § 7.
+  (acyclic drugs), giving **361 CV groups** after the acyclic split. Test: 120 molecules,
+  106 groups, 10 acyclic.
+- **The provided train and test splits share 23 scaffolds.** The test set is therefore *not*
+  scaffold-disjoint from training, so the final held-out number in step 4.6 is easier than a
+  novel-scaffold screen. Report it as such; the grouped-CV estimate is the conservative one.
+- **Measured cost of ignoring scaffolds:** an untuned Random Forest scores ROC AUC 0.833 under
+  random `StratifiedKFold` but 0.752 under `StratifiedGroupKFold` — **+0.080 AUC of pure optimism**,
+  with fold variance also rising (±0.040 → ±0.079). Illustrative only, but it is why step 4.2 exists.
 
 ### Constant vs redundant — distinct concepts
 
@@ -246,15 +350,36 @@ Reading it needs `openpyxl`, which is not installed.
 
 ---
 
-## 7. Open items [OPEN]
+## 7. Decisions made
 
-- **Correlation filter threshold.** Implemented as `CorrelationFilter`, off by default
-  (`correlation_threshold=None`). Intended to be grid-searched via
-  `preprocess__drop_correlated__threshold: [0.90, 0.95, 0.99]`. Note that "no filter at all"
-  cannot be a grid value, since `None` removes the step entirely — compare it as a separate variant.
-- **Empty Murcko scaffolds** (acyclic molecules): the proposal says handling is "predefined" but does
-  not say what it is. Suggested default — give each such molecule its own group, keyed by its SMILES,
-  so acyclic drugs are not merged into one large group.
+- **Empty Murcko scaffolds → one group each** (2026-11-14). The 43 acyclic training drugs get group
+  keys `acyclic::<SMILES>`. Rationale: grouping exists to stop *structural analogs* straddling a
+  split, and two acyclic drugs are not analogs — they share only the absence of rings. Keeping `''`
+  as a single group would make it the largest group in the dataset (43, vs benzene's 36) and fill
+  45% of one fold.
+- **Redundant features → kept; no correlation filter** (2026-11-14). The proposal calls the filter
+  optional, so this is compliant. `build_preprocessor` keeps `correlation_threshold=None` as its
+  default, so `CorrelationFilter` is never added to the model pipeline; it stays in the codebase
+  only to power the redundancy section of `01_data_report.py`. Do not add
+  `preprocess__drop_correlated__threshold` to any grid. Two consequences are now binding, see § 8.
+- **`Ipc` → `log1p` before scaling** (2026-11-14). Implemented as `LogTransformColumns`, first step
+  of the pipeline. Raw `Ipc` spans 3.2–8.5e13 (variance 1.8e25, twenty orders of magnitude above any
+  other descriptor) and accounted for **100%** of unscaled kNN/SVM distance; z-scoring alone still
+  left one molecule 19.8 SD out. After the transform the worst single-feature share of distance is
+  **0.56%** and the extreme molecule sits at 3.8 SD. Row-independent, so fold-safe anywhere.
+
+## 8. Open items [OPEN]
+
+- **Permutation importance MUST be computed at cluster level** — this is now required, not advisory,
+  because the redundant descriptors are staying. Permuting `MolWt` alone barely moves the score,
+  since `Chi0` and 12 other size proxies still carry the signal, so all 14 score near zero even if
+  molecular size is the dominant driver. Permute each correlated cluster together. Clusters can be
+  derived from `CorrelationFilter(threshold=0.95).fit(...).redundant_pairs_`, which already records
+  which descriptor displaced which.
+- **kNN and RBF-SVM are handicapped by the kept redundancy**, and the report must say so. Molecular
+  size is represented ~14 times, so it carries ~14x weight in every Euclidean distance. If those two
+  models underperform the trees, that is partly an artifact of feature duplication, not evidence that
+  distance-based methods suit this problem poorly.
 - **Hyperparameter grids** for the five algorithms are not specified anywhere; agree on them before
   the tuning run.
 - **Tracked logs.** `logs/` is git-ignored to avoid merge conflicts across five people. If the team

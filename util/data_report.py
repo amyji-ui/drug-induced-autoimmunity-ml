@@ -1,6 +1,6 @@
 """Data exploration report for the DIA prediction project.
 
-Running this file writes class balance, shape, and quality checks to logs/01_data_report.log.
+Running this file writes class balance, shape, and quality checks to logs/data_report.log.
 Paths and data loading come from 00_preprocessing.py.
 """
 
@@ -17,14 +17,9 @@ import pandas as pd
 from sklearn.feature_selection import VarianceThreshold
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config
+
 preprocessing = importlib.import_module("00_preprocessing")
-
-LOG_FILE = preprocessing.LOG_DIR / "01_data_report.log"
-
-# Thresholds to compare, and the one whose dropped pairs are listed in full.
-REDUNDANCY_THRESHOLDS = (0.99, 0.95, 0.90)
-EXAMPLE_THRESHOLD = 0.95
-N_EXAMPLES = 8
 
 
 # --------------------------------------------------------------------------
@@ -46,7 +41,7 @@ def summarize_class_balance(labels: pd.Series) -> dict[str, float]:
     """Count the two classes and the positive rate for one split."""
     label_counts = labels.value_counts()
     n_negative = int(label_counts.get(0, 0))
-    n_positive = int(label_counts.get(preprocessing.POSITIVE_LABEL, 0))
+    n_positive = int(label_counts.get(config.POSITIVE_LABEL, 0))
     n_total = n_negative + n_positive
     positive_rate = n_positive / n_total if n_total else float("nan")
     return {
@@ -98,20 +93,6 @@ def find_invalid_smiles(smiles: pd.Series) -> list[str] | None:
 # --------------------------------------------------------------------------
 
 
-def configure_logging(log_path: Path) -> None:
-    """Send the report to both the log file and the console, overwriting any previous run."""
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        handlers=[
-            logging.FileHandler(log_path, mode="w"),
-            logging.StreamHandler(),
-        ],
-        force=True,
-    )
-
-
 def report_split(name: str, dataframe: pd.DataFrame) -> list[str]:
     """Log the shape, class balance, and quality checks for one split, returning its constant columns."""
     features, labels, smiles = preprocessing.split_features_labels(dataframe)
@@ -156,8 +137,8 @@ def report_split(name: str, dataframe: pd.DataFrame) -> list[str]:
 def report_overlap(train_df: pd.DataFrame, test_df: pd.DataFrame) -> None:
     """Log whether the two splits share column names or molecules."""
     columns_match = list(train_df.columns) == list(test_df.columns)
-    train_smiles = set(train_df[preprocessing.SMILES_COLUMN])
-    test_smiles = set(test_df[preprocessing.SMILES_COLUMN])
+    train_smiles = set(train_df[config.SMILES_COLUMN])
+    test_smiles = set(test_df[config.SMILES_COLUMN])
     shared_smiles = train_smiles & test_smiles
 
     logging.info("[train vs test]")
@@ -231,7 +212,7 @@ def report_redundancy(train_df: pd.DataFrame) -> None:
     features, _, _ = preprocessing.split_features_labels(train_df)
     summaries = {
         threshold: summarize_redundancy(features, threshold)
-        for threshold in REDUNDANCY_THRESHOLDS
+        for threshold in config.REDUNDANCY_THRESHOLDS
     }
 
     logging.info("[redundancy among varying descriptors (train only)]")
@@ -244,9 +225,9 @@ def report_redundancy(train_df: pd.DataFrame) -> None:
             summary["n_varying"],
         )
 
-    example_pairs = summaries[EXAMPLE_THRESHOLD]["pairs"]
-    logging.info("  first %d drops at |r| > %.2f:", N_EXAMPLES, EXAMPLE_THRESHOLD)
-    for dropped_name, kept_name, correlation in example_pairs[:N_EXAMPLES]:
+    example_pairs = summaries[config.EXAMPLE_THRESHOLD]["pairs"]
+    logging.info("  first %d drops at |r| > %.2f:", config.N_REDUNDANCY_EXAMPLES, config.EXAMPLE_THRESHOLD)
+    for dropped_name, kept_name, correlation in example_pairs[:config.N_REDUNDANCY_EXAMPLES]:
         logging.info(
             "    %-22s displaced by %-22s |r| = %.4f",
             dropped_name,
@@ -273,10 +254,10 @@ def report_redundancy(train_df: pd.DataFrame) -> None:
 
 def main() -> None:
     """Write the dataset exploration report."""
-    configure_logging(LOG_FILE)
+    preprocessing.configure_logging(config.DATA_REPORT_LOG)
 
-    train_df = preprocessing.load_split(preprocessing.TRAIN_FILE)
-    test_df = preprocessing.load_split(preprocessing.TEST_FILE)
+    train_df = preprocessing.load_split(config.TRAIN_FILE)
+    test_df = preprocessing.load_split(config.TEST_FILE)
 
     logging.info("DIA dataset exploration report")
     logging.info("=" * 60)
@@ -298,7 +279,7 @@ def main() -> None:
     report_constant_agreement(train_constant, test_constant)
     report_redundancy(train_df)
 
-    logging.info("report written to %s", LOG_FILE)
+    logging.info("report written to %s", config.DATA_REPORT_LOG)
 
 
 if __name__ == "__main__":
