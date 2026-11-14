@@ -42,8 +42,9 @@ Project/                          <- git repo root (branch: main)
     ├── 00_preprocessing.py       <- pipeline step
     ├── 01_scaffold_grouping.py   <- pipeline step
     ├── 02_tuning.py              <- pipeline step (shared harness)
-    ├── data_report.py            <- runnable report
-    └── grouping_report.py        <- runnable report
+    ├── data_report.py            <- report
+    ├── grouping_report.py        <- report
+    └── tuning_report.py          <- report
 ```
 
 ### Conventions (team rules, not negotiable)
@@ -87,29 +88,40 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 
 tuning = importlib.import_module("02_tuning")
+tuning_report = importlib.import_module("tuning_report")
 
-tuning.run_grid_search(
+outcome = tuning.run_grid_search(
     model_name="knn",                      # must match a key under `models:` in config.yaml
     estimator=KNeighborsClassifier(),
     param_grid={"model__n_neighbors": [3, 5, 7, 11, 15],
                 "model__metric": ["euclidean", "manhattan"],
                 "model__weights": ["uniform", "distance"]},
 )
+tuning_report.report_grid_search(outcome)
 ```
+
+Two calls, because computation and reporting are separate: `run_grid_search` fits and persists
+and returns a `GridSearchOutcome`, and `report_grid_search` turns that into the log. The harness
+contains no logging at all, so a later step can reuse an outcome without writing a report.
 
 Grid keys are pipeline paths: `model__<param>` reaches the classifier. Never add
 `preprocess__drop_correlated__threshold` (see § 7).
 
-`run_grid_search` is the only function in `02_tuning.py` a model script should call. The rest
-(`score_predictions`, `expand_param_grid`, `load_training_data`, `evaluate_combination`,
-`summarize_results`, `get_metric_columns`, `save_results`, `save_pipelines`) are internals —
-they are what the harness fixes so five people cannot diverge, so do not call or override them.
+`run_grid_search` is the only function in `02_tuning.py` a model script should call, plus
+`load_pipelines(model_name)` for the step 4.6 ensemble. The rest (`score_predictions`,
+`expand_param_grid`, `load_training_data`, `evaluate_combination`, `summarize_results`,
+`get_metric_columns`, `save_results`, `save_pipelines`) are internals — they are what the
+harness fixes so five people cannot diverge, so do not call or override them.
+
+`GridSearchOutcome` fields: `model_name`, `scaled`, `results`, `summary`, `best_params_json`,
+`best_pipelines`, `n_combinations`, `n_folds`, `elapsed_seconds`, `results_path`, `pipeline_path`.
 
 Each run writes `results/<model_name>.csv` (one row per combination × fold, all seven metrics),
 `results/pipelines/<model_name>.joblib` (the winner's five fitted pipelines — the step 4.6
 ensemble), and `logs/tuning_<model_name>.log`.
 | `util/data_report.py` | report → `logs/data_report.log` | done, runs clean |
 | `util/grouping_report.py` | report → `logs/grouping_report.log` | done, runs clean |
+| `util/tuning_report.py` | report → `logs/tuning_<model>.log` | done, verified on kNN |
 
 ### Pipeline API
 

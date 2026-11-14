@@ -2,15 +2,16 @@
 
 Freeze this file once the team agrees on it: it fixes the folds, the metrics, the selection
 rule, and the output format, so each person only supplies an estimator and a parameter grid.
+Nothing here logs; pass the returned outcome to tuning_report.report_grid_search.
 """
 
 from __future__ import annotations
 
 import importlib
 import json
-import logging
 import sys
 import time
+from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
 
@@ -34,6 +35,25 @@ import config
 preprocessing = importlib.import_module("00_preprocessing")
 grouping = importlib.import_module("01_scaffold_grouping")
 
+IDENTIFIER_COLUMNS = ("model_name", "params_json", "fold_index")
+
+
+@dataclass
+class GridSearchOutcome:
+    """Everything one grid search produced, for the reporter and the later pipeline steps."""
+
+    model_name: str
+    scaled: bool
+    results: pd.DataFrame
+    summary: pd.DataFrame
+    best_params_json: str
+    best_pipelines: list
+    n_combinations: int
+    n_folds: int
+    elapsed_seconds: float
+    results_path: Path
+    pipeline_path: Path
+
 
 # --------------------------------------------------------------------------
 # Scoring
@@ -56,6 +76,11 @@ def score_predictions(labels: pd.Series, probabilities: np.ndarray) -> dict[str,
         "mcc": matthews_corrcoef(labels, predictions),
         "f1": f1_score(labels, predictions, zero_division=0),
     }
+
+
+def get_metric_columns(results: pd.DataFrame) -> list[str]:
+    """Return the score columns, excluding the identifying ones."""
+    return [column for column in results.columns if column not in IDENTIFIER_COLUMNS]
 
 
 # --------------------------------------------------------------------------
@@ -120,12 +145,6 @@ def evaluate_combination(
     return fold_rows, fitted_pipelines
 
 
-def get_metric_columns(results: pd.DataFrame) -> list[str]:
-    """Return the score columns, excluding the identifying ones."""
-    identifier_columns = ("model_name", "params_json", "fold_index")
-    return [column for column in results.columns if column not in identifier_columns]
-
-
 def summarize_results(results: pd.DataFrame) -> pd.DataFrame:
     """Aggregate fold-level scores per parameter combination, ranked by the selection metric."""
     metric_columns = get_metric_columns(results)
@@ -155,6 +174,11 @@ def save_pipelines(model_name: str, pipelines: list) -> Path:
     return pipeline_path
 
 
+def load_pipelines(model_name: str) -> list:
+    """Reload one model's fitted pipelines, for the final ensemble in step 4.6."""
+    return joblib.load(config.PIPELINE_DIR / f"{model_name}.joblib")
+
+
 # --------------------------------------------------------------------------
 # Entry point for the per-model scripts
 # --------------------------------------------------------------------------
@@ -164,29 +188,14 @@ def run_grid_search(
     model_name: str,
     estimator: BaseEstimator,
     param_grid: dict[str, list],
-) -> pd.DataFrame:
+) -> GridSearchOutcome:
     """Tune one algorithm on the shared folds and persist its scores and winning pipelines.
 
     Everything except the estimator and the grid is fixed here, so all five models stay comparable.
     """
-    preprocessing.configure_logging(config.LOG_DIR / f"tuning_{model_name}.log")
-
     features, labels, groups = load_training_data()
     folds = grouping.build_cv_folds(features, labels, groups)
     combinations = expand_param_grid(param_grid)
-
-    logging.info("Grid search: %s", model_name)
-    logging.info("=" * 60)
-    logging.info(
-        "  scaling: %s (from config.yaml)", preprocessing.needs_scaling(model_name)
-    )
-    logging.info(
-        "  %d combinations x %d folds = %d fits",
-        len(combinations),
-        len(folds),
-        len(combinations) * len(folds),
-    )
-    logging.info("")
 
     all_rows = []
     pipelines_by_combination = {}
@@ -202,46 +211,19 @@ def run_grid_search(
     elapsed_seconds = time.perf_counter() - started_at
     results = pd.DataFrame(all_rows)
     summary = summarize_results(results)
+    best_params_json = summary.index[0]
+    best_pipelines = pipelines_by_combination[best_params_json]
 
-    best_parameters_json = summary.index[0]
-    best_mean = summary.loc[best_parameters_json, (config.SELECTION_METRIC, "mean")]
-    best_std = summary.loc[best_parameters_json, (config.SELECTION_METRIC, "std")]
-
-    results_path = save_results(model_name, results)
-    pipeline_path = save_pipelines(
-        model_name, pipelines_by_combination[best_parameters_json]
+    return GridSearchOutcome(
+        model_name=model_name,
+        scaled=preprocessing.needs_scaling(model_name),
+        results=results,
+        summary=summary,
+        best_params_json=best_params_json,
+        best_pipelines=best_pipelines,
+        n_combinations=len(combinations),
+        n_folds=len(folds),
+        elapsed_seconds=elapsed_seconds,
+        results_path=save_results(model_name, results),
+        pipeline_path=save_pipelines(model_name, best_pipelines),
     )
-
-    logging.info("  top configurations by mean %s:", config.SELECTION_METRIC)
-    for parameters_json, row in summary.head(5).iterrows():
-        logging.info(
-            "    %.3f +/- %.3f  %s",
-            row[(config.SELECTION_METRIC, "mean")],
-            row[(config.SELECTION_METRIC, "std")],
-            json.loads(parameters_json),
-        )
-    logging.info("")
-    logging.info("  selected: %s", json.loads(best_parameters_json))
-    logging.info("  mean %s: %.3f +/- %.3f", config.SELECTION_METRIC, best_mean, best_std)
-    logging.info("")
-
-    winner_rows = results[results["params_json"] == best_parameters_json]
-    metric_columns = get_metric_columns(results)
-    logging.info("  fold-level scores for the selected configuration:")
-    for _, row in winner_rows.iterrows():
-        scores = "  ".join(f"{name}={row[name]:.3f}" for name in metric_columns)
-        logging.info("    fold %d: %s", row["fold_index"], scores)
-    logging.info(
-        "    mean:   %s",
-        "  ".join(f"{name}={winner_rows[name].mean():.3f}" for name in metric_columns),
-    )
-    logging.info(
-        "    std:    %s",
-        "  ".join(f"{name}={winner_rows[name].std():.3f}" for name in metric_columns),
-    )
-    logging.info("")
-    logging.info("  %d fits in %.1fs", len(results), elapsed_seconds)
-    logging.info("  scores    -> %s", results_path)
-    logging.info("  pipelines -> %s", pipeline_path)
-
-    return results
