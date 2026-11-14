@@ -28,20 +28,28 @@ Tags used below:
 ## 2. Repository layout and conventions
 
 ```
-Project/                      <- git repo root (branch: main)
+Project/                          <- git repo root (branch: main)
 ├── .gitignore
-├── PROJECT_SPEC.md           <- this file
-├── Project_Proposal.pdf      <- source of truth
-├── data/                     <- tracked; the project does not run without it
-├── logs/                     <- generated, git-ignored
-└── util/                     <- all scripts live here
-    ├── 00_preprocessing.py   <- library module (nothing executes on import)
-    └── 01_data_report.py     <- runnable; writes logs/01_data_report.log
+├── config.yaml                   <- every setting; edit this, not the code
+├── requirements.txt
+├── PROJECT_SPEC.md               <- this file
+├── Project_Proposal.pdf          <- source of truth
+├── data/                         <- tracked; the project does not run without it
+├── logs/                         <- generated, git-ignored
+├── results/                      <- <model>.csv tracked, pipelines/ git-ignored
+└── util/                         <- all scripts live here
+    ├── config.py                 <- loads config.yaml
+    ├── 00_preprocessing.py       <- pipeline step
+    ├── 01_scaffold_grouping.py   <- pipeline step
+    ├── 02_tuning.py              <- pipeline step (shared harness)
+    ├── data_report.py            <- runnable report
+    └── grouping_report.py        <- runnable report
 ```
 
 ### Conventions (team rules, not negotiable)
-- **All scripts go in `util/`**, numbered `00` … `0n` in dependency order.
-- **No config file and no `argparse`** — constants live at the top of the module.
+- **All scripts go in `util/`**. Pipeline steps are numbered `00` … `0n` in dependency order;
+  reports and helpers keep plain names so the numbering reads as the pipeline itself.
+- **All settings live in `config.yaml`**, never hard-coded. No `argparse`.
 - **At most 3 sentences of comment** per function; prefer a short docstring.
 - **Expand code**: multi-line steps with named intermediate variables, no dense one-liners.
 
@@ -92,6 +100,11 @@ tuning.run_grid_search(
 Grid keys are pipeline paths: `model__<param>` reaches the classifier. Never add
 `preprocess__drop_correlated__threshold` (see § 7).
 
+`run_grid_search` is the only function in `02_tuning.py` a model script should call. The rest
+(`score_predictions`, `expand_param_grid`, `load_training_data`, `evaluate_combination`,
+`summarize_results`, `get_metric_columns`, `save_results`, `save_pipelines`) are internals —
+they are what the harness fixes so five people cannot diverge, so do not call or override them.
+
 Each run writes `results/<model_name>.csv` (one row per combination × fold, all seven metrics),
 `results/pipelines/<model_name>.joblib` (the winner's five fitted pipelines — the step 4.6
 ensemble), and `logs/tuning_<model_name>.log`.
@@ -108,13 +121,15 @@ digit-prefixed pipeline modules still need `importlib.import_module`.
 To change a setting, edit `config.yaml`. Never hard-code a path, a column name, or the seed.
 
 Names exposed by `config`:
-- paths (absolute `Path` objects): `PROJECT_DIR`, `DATA_DIR`, `LOG_DIR`, `TRAIN_FILE`, `TEST_FILE`,
-  `DESCRIPTOR_DICTIONARY_FILE`
+- paths (absolute `Path` objects): `PROJECT_DIR`, `CONFIG_FILE`, `DATA_DIR`, `LOG_DIR`,
+  `TRAIN_FILE`, `TEST_FILE`, `DESCRIPTOR_DICTIONARY_FILE`, `RESULTS_DIR`, `PIPELINE_DIR`
 - columns: `LABEL_COLUMN`, `SMILES_COLUMN`, `POSITIVE_LABEL`
 - reproducibility: `RANDOM_SEED = 42`
 - models: `MODELS` (name → `{scale: bool}` for all five), `MODEL_NAMES`, `SCALED_MODELS` (derived)
 - preprocessing: `HEAVY_TAILED_COLUMNS = ("Ipc",)`, `CORRELATION_THRESHOLD = None`
 - cross-validation: `N_SPLITS = 5`, `ACYCLIC_PREFIX = "acyclic::"`
+- evaluation: `DECISION_THRESHOLD = 0.5` (predefined by the proposal, never tuned),
+  `SELECTION_METRIC = "roc_auc"` (each algorithm's configuration is chosen on its fold mean)
 - reports: `DATA_REPORT_LOG`, `GROUPING_REPORT_LOG`, `REDUNDANCY_THRESHOLDS`, `EXAMPLE_THRESHOLD`,
   `N_REDUNDANCY_EXAMPLES`, `N_OVERLAP_EXAMPLES`
 
@@ -155,7 +170,7 @@ pipeline = preprocessing.build_model_pipeline(estimator, model_name="rbf_svm")
 ```
 
 `RANDOM_SEED = 42` lives in `00_preprocessing.py` and is used for both the split and every
-stochastic model. Import `build_cv_folds` from `02_scaffold_grouping.py` rather than constructing
+stochastic model. Import `build_cv_folds` from `01_scaffold_grouping.py` rather than constructing
 a splitter, so all models share identical folds as step 4.4 requires.
 
 ---
@@ -194,7 +209,7 @@ ROC AUC / AP / balanced accuracy / MCC rather than plain accuracy.
 
 ### Quality checks [VERIFIED]
 
-Run `util/01_data_report.py` to regenerate all of this.
+Run `util/data_report.py` to regenerate all of this.
 
 - No missing or non-finite values in either split.
 - No duplicate SMILES within train or within test.
@@ -329,7 +344,7 @@ Reading it needs `openpyxl`, which is not installed.
 
 - **Interpreter:** `.venv/` at `09615_code/`, one level **above** the repo root and shared with the
   course labs, so it is not tracked here. Run scripts from `09615_code/` as
-  `.venv/bin/python Project/util/01_data_report.py`.
+  `.venv/bin/python Project/util/data_report.py`.
 - **Dependencies:** pinned in `requirements.txt` at the repo root (`uv pip install -r requirements.txt`).
   All of them are installed and verified working, with one exception below.
 
@@ -360,7 +375,7 @@ Reading it needs `openpyxl`, which is not installed.
 - **Redundant features → kept; no correlation filter** (2026-11-14). The proposal calls the filter
   optional, so this is compliant. `build_preprocessor` keeps `correlation_threshold=None` as its
   default, so `CorrelationFilter` is never added to the model pipeline; it stays in the codebase
-  only to power the redundancy section of `01_data_report.py`. Do not add
+  only to power the redundancy section of `data_report.py`. Do not add
   `preprocess__drop_correlated__threshold` to any grid. Two consequences are now binding, see § 8.
 - **`Ipc` → `log1p` before scaling** (2026-11-14). Implemented as `LogTransformColumns`, first step
   of the pipeline. Raw `Ipc` spans 3.2–8.5e13 (variance 1.8e25, twenty orders of magnitude above any
