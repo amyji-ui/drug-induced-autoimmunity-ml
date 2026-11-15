@@ -34,6 +34,12 @@ models:
     scale: true
   knn:
     scale: true
+    # Reproduce the 20 configurations already recorded in results/knn.csv.
+    param_grid:
+      model__n_neighbors: [3, 5, 7, 11, 15]
+      model__metric: [euclidean, manhattan]
+      # Distance weighting changes neighbor votes; it is not class weighting.
+      model__weights: [uniform, distance]
 
 preprocessing:
   # Ipc spans 3.2 to 8.5e13 and would otherwise decide every distance on its own.

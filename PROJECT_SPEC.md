@@ -64,8 +64,7 @@ preprocessing = importlib.import_module("00_preprocessing")
 ```
 
 ### What exists so far
-| File | Role | Status |
-|---|---|---|
+
 **Only pipeline steps are numbered.** Reports and other side utilities keep plain names, so the
 numbering reads as the pipeline itself.
 
@@ -76,8 +75,12 @@ numbering reads as the pipeline itself.
 | `util/00_preprocessing.py` | pipeline — loaders, transformers, pipeline builders | done |
 | `util/01_scaffold_grouping.py` | pipeline — scaffolds, CV groups, the shared folds | done |
 | `util/02_tuning.py` | pipeline — shared grid-search harness; **freeze once agreed** | done, verified on kNN |
-| `util/05_xgboost.py` | pipeline — XGBoost grid search, 48 combinations | done, 0.777 ± 0.075 |
-| `util/03_*`, `04_*`, `06_*`, `07_*` | pipeline — LR, RF, SVM, kNN | not started |
+| `util/05_xgboost.py` | pipeline — XGBoost, grid in the script | done, 0.777 ± 0.075 |
+| `util/07_knn.py` | pipeline — kNN, grid from `models.knn.param_grid` | done, 0.732 ± 0.108 |
+| `util/03_*`, `04_*`, `06_*` | pipeline — logistic regression, random forest, RBF-SVM | not started |
+| `util/data_report.py` | report → `logs/data_report.log` | done, runs clean |
+| `util/grouping_report.py` | report → `logs/grouping_report.log` | done, runs clean |
+| `util/tuning_report.py` | report → `logs/tuning_<model>.log` | done |
 
 ### Writing a per-model script
 
@@ -126,9 +129,32 @@ harness fixes so five people cannot diverge, so do not call or override them.
 Each run writes `results/<model_name>.csv` (one row per combination × fold, all seven metrics),
 `results/pipelines/<model_name>.joblib` (the winner's five fitted pipelines — the step 4.6
 ensemble), and `logs/tuning_<model_name>.log`.
-| `util/data_report.py` | report → `logs/data_report.log` | done, runs clean |
-| `util/grouping_report.py` | report → `logs/grouping_report.log` | done, runs clean |
-| `util/tuning_report.py` | report → `logs/tuning_<model>.log` | done, verified on kNN |
+
+For kNN, run `python util/07_knn.py` from the repo root in the project environment.
+Its grid lives under `models.knn.param_grid` in `config.yaml` and reproduces the existing
+search space in `results/knn.csv`: k = 3, 5, 7, 11, 15; Euclidean or Manhattan distance; uniform or
+distance-weighted votes (20 configurations × 5 folds = 100 fits). It uses the shared
+fold-local log transform, constant-feature removal, and scaling, without adding a
+correlation filter. Distance weighting is not class weighting. Scores are development
+CV estimates because the same folds select hyperparameters; the script does not evaluate
+the test set. Kept correlated descriptors can overweight molecular-size information in
+kNN distances, which must be acknowledged when comparing models.
+
+The verified winner is k = 5, Manhattan distance, distance-weighted voting, with mean
+validation ROC AUC 0.732 ± 0.108 and AP 0.571 ± 0.116 (sample standard deviations across
+five folds). The rerun matches all seven fold-level metrics of the existing winner.
+Six non-winning rows have small AUC/AP differences from the earlier CSV (maximum absolute
+AUC difference 0.005); their affected fold has opposite-label neighbors tied at the k-th
+boundary. These ties are a possible source of numerical reproducibility differences;
+the selected configuration and all threshold-based metrics are unchanged.
+
+### Where a grid lives
+
+Two patterns are currently in use and should be reconciled before the remaining three models
+are written: `07_knn.py` reads its grid from `models.knn.param_grid` in `config.yaml`, while
+`05_xgboost.py` declares `PARAM_GRID` in the script. The config form matches the team rule that
+all settings live in `config.yaml`; the script form keeps `tuning.PER_FOLD` next to the estimator,
+though the sentinel is a plain string and serializes to YAML fine. Pick one and convert the other.
 
 ### Pipeline API
 
@@ -414,7 +440,8 @@ Reading it needs `openpyxl`, which is not installed.
   size is represented ~14 times, so it carries ~14x weight in every Euclidean distance. If those two
   models underperform the trees, that is partly an artifact of feature duplication, not evidence that
   distance-based methods suit this problem poorly.
-- **Hyperparameter grids** for the five algorithms are not specified anywhere; agree on them before
-  the tuning run.
+- **Hyperparameter grids** for the other four algorithms still need agreement before tuning.
+  kNN reuses the 20-configuration grid already recorded in `results/knn.csv`; it is now
+  configured under `models.knn.param_grid`.
 - **Tracked logs.** `logs/` is git-ignored to avoid merge conflicts across five people. If the team
   wants the report shared, commit one curated copy at submission with `git add -f`.
