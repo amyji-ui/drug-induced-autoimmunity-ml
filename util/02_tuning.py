@@ -37,6 +37,9 @@ grouping = importlib.import_module("01_scaffold_grouping")
 
 IDENTIFIER_COLUMNS = ("model_name", "params_json", "fold_index")
 
+# Grid sentinel: the value is computed from each training fold instead of being searched.
+PER_FOLD = "per_fold"
+
 
 @dataclass
 class GridSearchOutcome:
@@ -98,6 +101,31 @@ def expand_param_grid(param_grid: dict[str, list]) -> list[dict]:
     return combinations
 
 
+def compute_per_fold_value(parameter_name: str, train_labels: pd.Series) -> float:
+    """Compute a PER_FOLD parameter from one training fold's labels.
+
+    Only scale_pos_weight is supported; the proposal asks for it to come from each training fold
+    so that no count is taken from the held-out molecules.
+    """
+    if not parameter_name.endswith("scale_pos_weight"):
+        raise ValueError(f"no per-fold rule for {parameter_name!r}")
+
+    n_positive = int((train_labels == config.POSITIVE_LABEL).sum())
+    n_negative = int(len(train_labels) - n_positive)
+    return n_negative / n_positive
+
+
+def resolve_per_fold_params(combination: dict, train_labels: pd.Series) -> dict:
+    """Replace every PER_FOLD sentinel with the value computed from this training fold."""
+    resolved = dict(combination)
+    for parameter_name, value in combination.items():
+        if isinstance(value, str) and value == PER_FOLD:
+            resolved[parameter_name] = compute_per_fold_value(
+                parameter_name, train_labels
+            )
+    return resolved
+
+
 def load_training_data() -> tuple[pd.DataFrame, pd.Series, np.ndarray]:
     """Load the training split and its scaffold group keys."""
     train_df = preprocessing.load_split(config.TRAIN_FILE)
@@ -117,17 +145,20 @@ def evaluate_combination(
     """Fit one parameter combination on every fold and score its held-out predictions.
 
     A fresh clone is fitted per fold, so the five pipelines share hyperparameters but not training data.
+    PER_FOLD values are resolved separately inside each fold and never recorded in params_json,
+    so all five folds of one combination still group together.
     """
     parameters_json = json.dumps(combination, sort_keys=True)
     fold_rows = []
     fitted_pipelines = []
 
     for fold_index, (train_index, validation_index) in enumerate(folds):
+        train_labels = labels.iloc[train_index]
         pipeline = preprocessing.build_model_pipeline(
             clone(estimator), model_name=model_name
         )
-        pipeline.set_params(**combination)
-        pipeline.fit(features.iloc[train_index], labels.iloc[train_index])
+        pipeline.set_params(**resolve_per_fold_params(combination, train_labels))
+        pipeline.fit(features.iloc[train_index], train_labels)
 
         probabilities = pipeline.predict_proba(features.iloc[validation_index])[:, 1]
         fold_scores = score_predictions(labels.iloc[validation_index], probabilities)

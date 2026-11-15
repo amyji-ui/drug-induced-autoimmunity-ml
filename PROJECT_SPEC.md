@@ -76,7 +76,8 @@ numbering reads as the pipeline itself.
 | `util/00_preprocessing.py` | pipeline — loaders, transformers, pipeline builders | done |
 | `util/01_scaffold_grouping.py` | pipeline — scaffolds, CV groups, the shared folds | done |
 | `util/02_tuning.py` | pipeline — shared grid-search harness; **freeze once agreed** | done, verified on kNN |
-| `util/03_*` … `07_*` | pipeline — one file per algorithm, each calling the shared harness | not started |
+| `util/05_xgboost.py` | pipeline — XGBoost grid search, 48 combinations | done, 0.777 ± 0.075 |
+| `util/03_*`, `04_*`, `06_*`, `07_*` | pipeline — LR, RF, SVM, kNN | not started |
 
 ### Writing a per-model script
 
@@ -106,6 +107,12 @@ contains no logging at all, so a later step can reuse an outcome without writing
 
 Grid keys are pipeline paths: `model__<param>` reaches the classifier. Never add
 `preprocess__drop_correlated__threshold` (see § 7).
+
+**Per-fold parameters.** A grid value of `tuning.PER_FOLD` is not searched; it is computed inside
+each training fold. Used for XGBoost's `scale_pos_weight`, which the proposal requires to come from
+each training fold — a global ratio would be derived partly from held-out labels. The sentinel, not
+the resolved number, is stored in `params_json`, so the five folds of one combination still group
+together. Per-fold values here range 3.021–3.064 against a global 3.042.
 
 `run_grid_search` is the only function in `02_tuning.py` a model script should call, plus
 `load_pipelines(model_name)` for the step 4.6 ensemble. The rest (`score_predictions`,
