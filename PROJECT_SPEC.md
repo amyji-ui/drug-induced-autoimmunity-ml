@@ -75,7 +75,7 @@ numbering reads as the pipeline itself.
 | `util/00_preprocessing.py` | pipeline — loaders, transformers, pipeline builders | done |
 | `util/01_scaffold_grouping.py` | pipeline — scaffolds, CV groups, the shared folds | done |
 | `util/02_tuning.py` | pipeline — shared grid-search harness; **freeze once agreed** | done, verified on kNN |
-| `util/05_xgboost.py` | pipeline — XGBoost, grid in the script | done, 0.777 ± 0.075 |
+| `util/05_xgboost.py` | pipeline — XGBoost, grid from `models.xgboost.param_grid` | done, 0.777 ± 0.075 |
 | `util/07_knn.py` | pipeline — kNN, grid from `models.knn.param_grid` | done, 0.732 ± 0.108 |
 | `util/03_*`, `04_*`, `06_*` | pipeline — logistic regression, random forest, RBF-SVM | not started |
 | `util/data_report.py` | report → `logs/data_report.log` | done, runs clean |
@@ -84,8 +84,22 @@ numbering reads as the pipeline itself.
 
 ### Writing a per-model script
 
-Each teammate supplies only an estimator and a grid; folds, scaling, metrics, selection rule
-and output format all come from `02_tuning.py` and `config.yaml`.
+Each teammate supplies only an estimator; the grid goes in `config.yaml`, and folds, scaling,
+metrics, selection rule and output format all come from `02_tuning.py`.
+
+In `config.yaml`:
+
+```yaml
+models:
+  knn:
+    scale: true
+    param_grid:
+      model__n_neighbors: [3, 5, 7, 11, 15]
+      model__metric: [euclidean, manhattan]
+      model__weights: [uniform, distance]
+```
+
+In `util/07_knn.py`:
 
 ```python
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -94,12 +108,12 @@ import config
 tuning = importlib.import_module("02_tuning")
 tuning_report = importlib.import_module("tuning_report")
 
+MODEL_NAME = "knn"            # must match a key under `models:` in config.yaml
+
 outcome = tuning.run_grid_search(
-    model_name="knn",                      # must match a key under `models:` in config.yaml
+    model_name=MODEL_NAME,
     estimator=KNeighborsClassifier(),
-    param_grid={"model__n_neighbors": [3, 5, 7, 11, 15],
-                "model__metric": ["euclidean", "manhattan"],
-                "model__weights": ["uniform", "distance"]},
+    param_grid=config.MODELS[MODEL_NAME]["param_grid"],
 )
 tuning_report.report_grid_search(outcome)
 ```
@@ -150,11 +164,14 @@ the selected configuration and all threshold-based metrics are unchanged.
 
 ### Where a grid lives
 
-Two patterns are currently in use and should be reconciled before the remaining three models
-are written: `07_knn.py` reads its grid from `models.knn.param_grid` in `config.yaml`, while
-`05_xgboost.py` declares `PARAM_GRID` in the script. The config form matches the team rule that
-all settings live in `config.yaml`; the script form keeps `tuning.PER_FOLD` next to the estimator,
-though the sentinel is a plain string and serializes to YAML fine. Pick one and convert the other.
+**Every grid lives in `config.yaml`, under `models.<name>.param_grid`.** A model script holds only
+the estimator and its fixed construction arguments; it reads the grid with
+`config.MODELS[MODEL_NAME]["param_grid"]`. This follows the team rule that all settings live in
+`config.yaml`, and it keeps the grid, the `scale` flag, and the provenance comments for one
+algorithm in a single block.
+
+The `PER_FOLD` sentinel is the plain string `"per_fold"`, so it round-trips through YAML
+unchanged and can sit in a grid there like any other value.
 
 ### Pipeline API
 

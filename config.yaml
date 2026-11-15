@@ -30,6 +30,21 @@ models:
     scale: false
   xgboost:
     scale: false
+    # A first pass with max_depth [2,3,4] and min_child_weight [1,5] put every top
+    # configuration on the grid boundary, so both ranges were shifted; max_depth 4 now
+    # wins from inside [3,4,5]. An ablation at the selected configuration confirmed
+    # min_child_weight 1 is a true optimum (0 -> 0.760, 0.5 -> 0.776, 1 -> 0.777,
+    # 2 -> 0.769, 5 -> 0.748). Held at 48 combinations so the search budget stays
+    # comparable across the five algorithms.
+    param_grid:
+      model__max_depth: [3, 4, 5]
+      model__learning_rate: [0.05, 0.1]
+      model__n_estimators: [200, 500]
+      model__colsample_bytree: [0.5, 0.8]
+      model__min_child_weight: [1, 2]
+      # Not searched: "per_fold" is the PER_FOLD sentinel, so 02_tuning.py computes
+      # neg/pos from each training fold instead of from a global ratio.
+      model__scale_pos_weight: [per_fold]
   rbf_svm:
     scale: true
   knn:
