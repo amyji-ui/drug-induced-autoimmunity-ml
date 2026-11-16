@@ -16,7 +16,7 @@ Publish the existing Logistic Regression implementation on branch `RL`, compatib
 - [x] Verify saved models/metrics and report all seven metrics with class-weight comparison.
 - [x] Review remote kNN/XGBoost branches and base `RL` on current main.
 - [x] Revalidate Logistic Regression and compatibility on the current Slurm allocation.
-- [ ] Push `RL` and verify its remote commit.
+- [x] Push `RL` and verify its remote commit.
 
 ## Milestone results and reproduction notes
 
@@ -62,3 +62,4 @@ Publish the existing Logistic Regression implementation on branch `RL`, compatib
 - 2026-11-15: Compatibility check passed exact fold equality, all 70 LR fits, reloaded winning metrics, fold-only scaling, and all seven metrics for one kNN configuration across five folds. It failed the XGBoost comparison against the repository CSV (maximum metric difference 0.13043478). Upstream XGBoost entry point, tuning code, preprocessing, requirements, and data are byte-identical on `RL`. Investigating by executing the original upstream grouping/tuning code in the same environment; the upstream CSV is preserved. Log: `logs/branch_compatibility_check.log`.
 - 2026-11-15: Branch compatibility concern resolved: loaded original grouping/tuning source from `origin/main` and reran the same XGBoost configuration in the same allocation. Its five-fold results are bit-for-bit identical to `RL`, including all seven metrics; per-fold class weights and absence of scaling also pass. The historical CSV discrepancy reproduces with unchanged upstream code, so its root cause remains an upstream reproducibility question, not an effect of this branch. No XGBoost results were overwritten. Log: `logs/xgboost_compatibility_check.log`; initial failed comparison preserved in `logs/branch_compatibility_check_initial.log`.
 - 2026-11-15: Final LR entry-point validation passed all 70 fits and exactly reproduced existing CSVs. Verified persisted folds against upstream splitter, all seven winning-model metrics after reload, scaler training-fold statistics, kNN representative metrics, and XGBoost same-environment compatibility. All validation data access was guarded to reject the held-out test split. `git diff --check` passed.
+- 2026-11-15: Created remote branch `RL` and verified its implementation commit `33abdc3f2761c7e1f133986e37b9331f1b1cceab` with `git ls-remote`. Remote main remains `5f1940ddf5bb7bb4485d310d2b9f12103f625a3a`. No merge or pull request was created. Branch: https://github.com/amyji-ui/drug-induced-autoimmunity-ml/tree/RL . This final documentation update records the verified publication.
