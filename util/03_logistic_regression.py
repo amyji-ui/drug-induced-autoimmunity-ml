@@ -1,4 +1,7 @@
-"""Tune L2 Logistic Regression on the shared scaffold folds using config.yaml."""
+"""Tune Logistic Regression with the shared preprocessing, scaffold folds, and reporting.
+
+Estimator settings and the grid live in config.yaml under models.logistic_regression.
+"""
 
 from __future__ import annotations
 
@@ -18,11 +21,12 @@ import config
 tuning = importlib.import_module("02_tuning")
 tuning_report = importlib.import_module("tuning_report")
 
+MODEL_NAME = "logistic_regression"
+
 
 def main() -> None:
-    """Run the agreed grid and reject any fit that reports a convergence failure."""
-    model_name = "logistic_regression"
-    settings = config.MODELS[model_name]
+    """Run the configured grid and reject fits that report convergence failures."""
+    settings = config.MODELS[MODEL_NAME]
     estimator = LogisticRegression(
         random_state=config.RANDOM_SEED,
         **settings["estimator"],
@@ -30,13 +34,17 @@ def main() -> None:
     param_grid = settings["param_grid"]
     n_combinations = math.prod(len(values) for values in param_grid.values())
     print(
-        f"Starting {model_name}: {n_combinations} combinations x {config.N_SPLITS} folds; "
+        f"Starting {MODEL_NAME}: {n_combinations} combinations x {config.N_SPLITS} folds; "
         f"seed={config.RANDOM_SEED}; convergence warnings are fatal.",
         flush=True,
     )
     with warnings.catch_warnings():
         warnings.simplefilter("error", ConvergenceWarning)
-        outcome = tuning.run_grid_search(model_name, estimator, param_grid)
+        outcome = tuning.run_grid_search(
+            model_name=MODEL_NAME,
+            estimator=estimator,
+            param_grid=param_grid,
+        )
 
     tuning_report.report_grid_search(outcome)
     logging.info("  estimator settings: %s", settings["estimator"])
