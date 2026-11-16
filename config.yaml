@@ -47,6 +47,10 @@ models:
       model__scale_pos_weight: [per_fold]
   rbf_svm:
     scale: true
+    param_grid:
+      model__C: [0.1, 1, 10, 100]
+      model__gamma: [scale, 0.001, 0.01, 0.1]
+      model__class_weight: [null, balanced]
   knn:
     scale: true
     # Reproduce the 20 configurations already recorded in results/knn.csv.
