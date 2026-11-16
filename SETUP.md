@@ -45,7 +45,7 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
 
 ### 与 KNN / XGBoost 的一致性
 
-`RL` 是独立的 Logistic Regression 开发分支。三个模型都从 YAML 读取网格，调用
+`LR` 是独立的 Logistic Regression 开发分支。三个模型都从 YAML 读取网格，调用
 `02_tuning.run_grid_search` 和 `tuning_report.report_grid_search`，使用相同的五折
 scaffold CV、七项指标、0.5 分类阈值，并按平均验证 ROC AUC 选择配置。
 逐折 CSV 的列格式一致，最佳配置均保留五个已拟合 Pipeline；调参不读取测试集。
