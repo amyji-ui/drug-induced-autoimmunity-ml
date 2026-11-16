@@ -7,6 +7,8 @@ build_cv_folds from this module so that all five models are tuned on identical f
 from __future__ import annotations
 
 import importlib
+import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -20,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 
 RDLogger.DisableLog("rdApp.*")
+_fold_cache = {}
 
 
 def compute_scaffold(smiles_string: str) -> str:
@@ -49,14 +52,63 @@ def build_scaffold_groups(smiles: pd.Series) -> np.ndarray:
 def build_cv_folds(
     features: pd.DataFrame, labels: pd.Series, groups: np.ndarray
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """Build the 5 scaffold-grouped, label-stratified folds once, for every model to reuse.
+    """Build once and reuse persisted folds, rejecting changed data or split settings."""
+    digest = hashlib.sha256()
+    for values in (features, labels, pd.Series(groups)):
+        digest.update(pd.util.hash_pandas_object(values, index=True).to_numpy().tobytes())
+    digest.update(json.dumps(list(features.columns)).encode())
+    metadata = {
+        "data_sha256": digest.hexdigest(),
+        "n_rows": len(features),
+        "n_splits": config.N_SPLITS,
+        "random_seed": config.RANDOM_SEED,
+    }
+    cache_key = (str(config.CV_FOLDS_FILE), json.dumps(metadata, sort_keys=True))
+    if cache_key in _fold_cache:
+        return _fold_cache[cache_key]
 
-    Materializing the folds means a later script cannot accidentally build a different splitter.
-    """
-    splitter = StratifiedGroupKFold(
-        n_splits=config.N_SPLITS, shuffle=True, random_state=config.RANDOM_SEED
-    )
-    return list(splitter.split(features, labels, groups))
+    if config.CV_FOLDS_FILE.exists():
+        saved = json.loads(config.CV_FOLDS_FILE.read_text())
+        if saved["metadata"] != metadata:
+            raise ValueError(
+                "Saved CV folds do not match the data/order or split settings; "
+                "use a new paths.cv_folds_file for an intentional new split."
+            )
+        validation_folds = saved["validation_indices"]
+    else:
+        splitter = StratifiedGroupKFold(
+            n_splits=config.N_SPLITS, shuffle=True, random_state=config.RANDOM_SEED
+        )
+        validation_folds = [
+            validation_index.tolist()
+            for _, validation_index in splitter.split(features, labels, groups)
+        ]
+
+    flat_indices = [index for indices in validation_folds for index in indices]
+    if (
+        len(validation_folds) != config.N_SPLITS
+        or any(type(index) is not int for index in flat_indices)
+        or sorted(flat_indices) != list(range(len(features)))
+    ):
+        raise ValueError("CV folds must cover each row exactly once")
+
+    row_indices = np.arange(len(features))
+    folds = []
+    for indices in validation_folds:
+        validation_index = np.asarray(indices, dtype=int)
+        train_index = np.setdiff1d(row_indices, validation_index)
+        if set(groups[train_index]) & set(groups[validation_index]):
+            raise ValueError("CV folds contain scaffold leakage")
+        if labels.iloc[train_index].nunique() != 2 or labels.iloc[validation_index].nunique() != 2:
+            raise ValueError("Each training and validation fold must contain both classes")
+        folds.append((train_index, validation_index))
+
+    if not config.CV_FOLDS_FILE.exists():
+        config.CV_FOLDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        saved = {"metadata": metadata, "validation_indices": validation_folds}
+        config.CV_FOLDS_FILE.write_text(json.dumps(saved, indent=2) + "\n")
+    _fold_cache[cache_key] = folds
+    return folds
 
 
 def find_scaffold_overlap(

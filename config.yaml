@@ -11,6 +11,7 @@ paths:
   # One CSV of fold-level scores per model; the fitted pipelines are binary and git-ignored.
   results_dir: results
   pipeline_dir: results/pipelines
+  cv_folds_file: results/cv_folds.json
 
 columns:
   label: Label
@@ -26,6 +27,14 @@ random_seed: 42
 models:
   logistic_regression:
     scale: true
+    estimator:
+      solver: lbfgs
+      l1_ratio: 0.0
+      max_iter: 5000
+      tol: 0.0001
+    param_grid:
+      model__C: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]
+      model__class_weight: [null, balanced]
   random_forest:
     scale: false
   xgboost:

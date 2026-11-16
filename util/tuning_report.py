@@ -94,6 +94,31 @@ def report_artifacts(outcome) -> None:
     logging.info("  pipelines -> %s", outcome.pipeline_path)
 
 
+def report_weight_comparison(outcome) -> None:
+    """Compare the best configuration within each searched class-weight setting."""
+    seen_weights = set()
+    for parameters_json, row in outcome.summary.iterrows():
+        parameters = json.loads(parameters_json)
+        if "model__class_weight" not in parameters:
+            continue
+        weight_key = json.dumps(parameters["model__class_weight"], sort_keys=True)
+        if weight_key in seen_weights:
+            continue
+        seen_weights.add(weight_key)
+        logging.info("  best class_weight=%s: %s", weight_key, parameters)
+        for metric in outcome.summary.columns.get_level_values(0).unique():
+            logging.info("    %s: %.4f +/- %.4f", metric, row[(metric, "mean")], row[(metric, "std")])
+
+
+def save_summary(outcome) -> Path:
+    """Save one row per combination with flat mean/std column names."""
+    summary = outcome.summary.copy()
+    summary.columns = [f"{metric}_{statistic}" for metric, statistic in summary.columns]
+    summary_path = config.RESULTS_DIR / f"{outcome.model_name}_summary.csv"
+    summary.to_csv(summary_path)
+    return summary_path
+
+
 def report_grid_search(outcome) -> Path:
     """Write the full report for one grid search and return the log path."""
     log_path = config.LOG_DIR / f"tuning_{outcome.model_name}.log"
@@ -102,6 +127,12 @@ def report_grid_search(outcome) -> Path:
     report_header(outcome)
     report_ranking(outcome)
     report_selection(outcome)
+    report_weight_comparison(outcome)
     report_artifacts(outcome)
+    logging.info("  summary   -> %s", save_summary(outcome))
+    logging.info("  CV folds  -> %s", config.CV_FOLDS_FILE)
+    logging.info("  classification threshold: %s", config.DECISION_THRESHOLD)
+    logging.info("  Development CV estimates: the same folds guided hyperparameter selection.")
+    logging.info("  The held-out test split was not evaluated by this grid search.")
 
     return log_path

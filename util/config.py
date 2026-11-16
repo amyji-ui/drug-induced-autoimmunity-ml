@@ -30,6 +30,7 @@ TEST_FILE = _resolve(_paths["test_file"])
 DESCRIPTOR_DICTIONARY_FILE = _resolve(_paths["descriptor_dictionary_file"])
 RESULTS_DIR = _resolve(_paths["results_dir"])
 PIPELINE_DIR = _resolve(_paths["pipeline_dir"])
+CV_FOLDS_FILE = _resolve(_paths["cv_folds_file"])
 
 _columns = _settings["columns"]
 LABEL_COLUMN = _columns["label"]
