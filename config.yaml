@@ -28,6 +28,30 @@ models:
     scale: true
   random_forest:
     scale: false
+    # 48 combinations, matching the XGBoost budget so the two tree ensembles are
+    # searched equally hard. class_weight carries the proposal's unweighted-vs-weighted
+    # comparison (section 4.3); null and "balanced" are both in the grid, so the
+    # ranking in results/random_forest.csv answers it directly.
+    #
+    # The selected configuration takes the largest n_estimators on the grid, so an
+    # ablation checked whether 600 is a boundary artifact: it is not, the metric
+    # plateaus there (300 -> 0.757, 600 -> 0.765, 1000 -> 0.764, 1500 -> 0.763).
+    param_grid:
+      model__n_estimators: [300, 600]
+      # null grows trees until the leaves are pure; min_samples_leaf is the real
+      # depth control on 477 molecules, so depth only needs a capped alternative.
+      model__max_depth: [null, 10]
+      model__min_samples_leaf: [1, 3, 5]
+      model__max_features: [sqrt, 0.3]
+      # "balanced_subsample" reweights per bootstrap sample and is the RF-specific
+      # variant; left out to keep the grid at 48. Add it if the team wants it compared.
+      #
+      # Averaged over the grid, the two settings tie on the selection metric
+      # (null 0.753, balanced 0.746 mean roc_auc) but diverge sharply at the fixed
+      # 0.5 threshold: recall 0.187 vs 0.421, balanced accuracy 0.590 vs 0.669,
+      # MCC 0.329 vs 0.396. ROC AUC is threshold-free and cannot see this, so the
+      # selection rule in section 4.4 picks the unweighted model. Report both.
+      model__class_weight: [null, balanced]
   xgboost:
     scale: false
     # A first pass with max_depth [2,3,4] and min_child_weight [1,5] put every top
