@@ -75,9 +75,10 @@ numbering reads as the pipeline itself.
 | `util/00_preprocessing.py` | pipeline — loaders, transformers, pipeline builders | done |
 | `util/01_scaffold_grouping.py` | pipeline — scaffolds, CV groups, the shared folds | done |
 | `util/02_tuning.py` | pipeline — shared grid-search harness; **freeze once agreed** | done, verified on kNN |
+| `util/04_random_forest.py` | pipeline — Random Forest, grid from `models.random_forest.param_grid` | done, 0.765 ± 0.104 |
 | `util/05_xgboost.py` | pipeline — XGBoost, grid from `models.xgboost.param_grid` | done, 0.777 ± 0.075 |
 | `util/07_knn.py` | pipeline — kNN, grid from `models.knn.param_grid` | done, 0.732 ± 0.108 |
-| `util/03_*`, `04_*`, `06_*` | pipeline — logistic regression, random forest, RBF-SVM | not started |
+| `util/03_*`, `06_*` | pipeline — logistic regression, RBF-SVM | not started |
 | `util/data_report.py` | report → `logs/data_report.log` | done, runs clean |
 | `util/grouping_report.py` | report → `logs/grouping_report.log` | done, runs clean |
 | `util/tuning_report.py` | report → `logs/tuning_<model>.log` | done |
@@ -457,8 +458,16 @@ Reading it needs `openpyxl`, which is not installed.
   size is represented ~14 times, so it carries ~14x weight in every Euclidean distance. If those two
   models underperform the trees, that is partly an artifact of feature duplication, not evidence that
   distance-based methods suit this problem poorly.
-- **Hyperparameter grids** for the other four algorithms still need agreement before tuning.
+- **Hyperparameter grids** for the remaining two algorithms still need agreement before tuning.
   kNN reuses the 20-configuration grid already recorded in `results/knn.csv`; it is now
-  configured under `models.knn.param_grid`.
+  configured under `models.knn.param_grid`. Random Forest is configured under
+  `models.random_forest.param_grid` at 48 combinations, matching the XGBoost budget.
+- **Random Forest's class-weight comparison splits by metric, and the report must say so.**
+  Averaged over the grid, `class_weight` `null` and `"balanced"` tie on the selection metric
+  (0.753 vs 0.746 mean ROC AUC) but diverge at the fixed 0.5 threshold: recall 0.187 vs 0.421,
+  balanced accuracy 0.590 vs 0.669, MCC 0.329 vs 0.396. ROC AUC is threshold-free, so the
+  § 4.4 rule selects the unweighted model even though the weighted one is the better classifier
+  at the § 4.5 threshold. The selected unweighted configuration recalls 16% of DIA-positive
+  drugs at 0.5. Neither rule was changed; both numbers belong in the write-up.
 - **Tracked logs.** `logs/` is git-ignored to avoid merge conflicts across five people. If the team
   wants the report shared, commit one curated copy at submission with `git add -f`.
